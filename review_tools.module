@@ -1,0 +1,107 @@
+<?php
+
+/*This module provides a button to create reviews 
+ * and prevents users to review a movie/TV series multiple times */
+
+
+
+/*Print the name of the node type*/
+function node_type_name()
+{
+    if ($node = menu_get_object('node', 1)) {
+        $type = $node->type;
+        if ($type == 'movie') {
+            $node_name = 'movie';
+        } elseif ($type == 'tv_series') {
+            $node_name = 'TV series';
+        }
+    }
+    return $node_name;
+}
+
+/*Get the NID of the node being viewed*/
+function get_nid()
+{
+    if ($node = menu_get_object('node', 1)) {
+        $nid = $node->nid;
+    }
+    return $nid;
+}
+
+/*Check if the user has already reviewed the movie/TV series being viewed*/
+function review_tools_check_review()
+{
+    global $user;
+    $nid        = get_nid();
+    $uid        = $user->uid;
+    $raw_result = db_query("SELECT field_data_field_movie.entity_id AS 'review_id', field_data_field_movie.field_movie_target_id AS 'movie_id',
+ COUNT(field_data_field_movie.entity_id) AS 'total' FROM field_data_field_movie INNER JOIN node 
+ ON field_data_field_movie.entity_id = node.nid WHERE (node.uid = :uid AND field_data_field_movie.field_movie_target_id = :nid);", array(
+        ':nid' => $nid,
+        ':uid' => $uid
+    ));
+    $result     = $raw_result->fetchObject();
+    $total            = $result->total;
+    $review_id        = $result->review_id;
+    $already_reviewed = array();
+    if ($total != 0) {
+        $already_reviewed[0] = TRUE;
+        $already_reviewed[1] = $review_id;
+    } else {
+        $already_reviewed[0] = FALSE;
+    }
+    return $already_reviewed;
+}
+
+/*Implementation of hook_block_info*/
+function review_tools_block_info()
+{
+    $blocks['review_tools'] = array(
+        'info' => t('Review tools block'),
+        'cache' => DRUPAL_NO_CACHE
+    );
+    return $blocks;
+}
+
+/*Implementation oh hook_block_view*/
+function review_tools_block_view($delta = '')
+{
+    switch ($delta) {
+        case 'review_tools':
+            $block['subject'] = t('Review Tools');
+            $check            = review_tools_check_review();
+            if ($check[0]) {
+                $block['content'] = '<b>You have already rated/reviewed this ' . node_type_name() . '</b><br><a class="review-tools-button" href="/node/' . $check[1] . '/edit">Edit your review</a>';
+            } else {
+                $block['content'] = '<a class="review-tools-button" href="/node/add/review?field_movie=' . get_nid() . '">Review this ' . node_type_name() . '</a>';
+            }
+            break;
+    }
+    return $block;
+}
+
+/*Implementation of hook_form_alter to prevent malicious users from reviewing movies/TV series multiple times via URL*/
+function review_tools_form_alter(&$form, &$form_state, $form_id)
+{
+    if ($form_id == 'review_node_form' && arg(1) == 'add') {
+        $movie_nid = $form_state['entityreference_prepopulate']['node']['review']['field_movie'][0];
+        global $user;
+        $uid              = $user->uid;
+        $raw_result       = db_query("SELECT field_data_field_movie.entity_id AS 'review_id', field_data_field_movie.field_movie_target_id AS 'movie_id',
+ COUNT(field_data_field_movie.entity_id) AS 'total' FROM field_data_field_movie INNER JOIN node 
+ ON field_data_field_movie.entity_id = node.nid WHERE (node.uid = :uid AND field_data_field_movie.field_movie_target_id = :nid);", array(
+            ':nid' => $movie_nid,
+            ':uid' => $uid
+        ));
+        $result           = $raw_result->fetchObject();
+        $already_reviewed = array();
+        $total            = $result->total;
+        $review_id        = $result->review_id;
+        $movie_id         = $result->movie_id;
+        if ($total != 0) {
+            $form['#disabled'] = TRUE;
+            drupal_set_message('No way! You have already rated/reviewed this movie! You can ' . l('Edit', '/node/' . $review_id . '/edit') . ' it if you want.');
+            drupal_goto('/node/' . $movie_id);
+        }
+    }
+}
